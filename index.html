@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Craving Soul | Every Bite Tells a Story</title>
+    <link rel="icon" href="images/hello.png" type="image/png">
+    <link rel="stylesheet" href="css/customer.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,700;1,600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+    <div class="header-content">
+        <div class="logo">
+            <img src="images/hello.png" alt="Craving Soul" class="custom-logo">
+            <div class="logo-text">
+                <h1>Craving<span>Soul</span></h1>
+                <p class="logo-tagline">Every Bite Tells a Story</p>
+            </div>
+        </div>
+        <div class="cart-icon" id="cartIcon" onclick="toggleCart()">
+            <i class="fas fa-shopping-bag"></i>
+            <span class="cart-count" id="cartCount">0</span>
+        </div>
+    </div>
+</header>
+
+<!-- HERO - PREMIUM & CLEAN -->
+<section class="hero">
+    <div class="hero-content">
+        <div class="hero-badge"><i class="fas fa-fire"></i> Hot, Fresh & Handcrafted</div>
+        <h2 class="hero-title">Satisfy Your <br><span class="gradient-text">Cravings.</span></h2>
+        <p class="hero-subtitle">Premium street food prepared with soul. Order now and collect at the counter in minutes.</p>
+        <button class="hero-btn primary" onclick="document.getElementById('menuSection').scrollIntoView({behavior:'smooth'})">
+            Explore Menu <i class="fas fa-arrow-down"></i>
+        </button>
+    </div>
+</section>
+
+<!-- ORDER STATUS TRACKER -->
+<div class="status-tracker" id="statusTracker" style="display:none;">
+    <div class="status-card">
+        <div class="status-header">
+            <h3><i class="fas fa-receipt"></i> Order #<span id="trackOrderId"></span></h3>
+            <button class="close-status" onclick="closeStatus()"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="status-steps">
+            <div class="step active" id="step-received">
+                <div class="step-icon"><i class="fas fa-check"></i></div>
+                <span>Received</span>
+            </div>
+            <div class="step-line" id="line1"></div>
+            <div class="step" id="step-preparing">
+                <div class="step-icon"><i class="fas fa-fire"></i></div>
+                <span>Preparing</span>
+            </div>
+            <div class="step-line" id="line2"></div>
+            <div class="step" id="step-ready">
+                <div class="step-icon"><i class="fas fa-bell"></i></div>
+                <span>Ready!</span>
+            </div>
+        </div>
+        <div class="status-items" id="statusItems"></div>
+    </div>
+</div>
+
+<!-- MENU -->
+<section class="menu-section" id="menuSection">
+    <div class="section-header">
+        <h2 class="section-title">Our <span>Menu</span></h2>
+        <div class="title-divider"></div>
+        <p class="section-subtitle">Pick your favorites below</p>
+    </div>
+
+    <div class="menu-grid" id="menuGrid">
+        <!-- Menu Items dynamically load here -->
+    </div>
+</section>
+
+<!-- FLOATING CART BAR (Eye Catcher for Mobile) -->
+<div class="float-cart-bar" id="floatCartBar" style="display:none;" onclick="toggleCart()">
+    <div class="float-left">
+        <span class="float-count" id="floatCount">0</span>
+        <div>
+            <strong>View Cart</strong>
+            <small id="floatItemsText">items</small>
+        </div>
+    </div>
+    <div class="float-right">
+        <span id="floatTotal">₹0</span>
+        <i class="fas fa-arrow-right"></i>
+    </div>
+</div>
+
+<!-- CART SIDEBAR -->
+<div class="cart-overlay" id="cartOverlay" onclick="toggleCart()"></div>
+<div class="cart-sidebar" id="cartSidebar">
+    <div class="cart-header">
+        <div>
+            <h2>Your Bag</h2>
+            <p class="cart-subtitle" id="cartSubtitle">0 items</p>
+        </div>
+        <button class="close-cart" onclick="toggleCart()"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="cart-items" id="cartItems">
+        <div class="empty-cart">
+            <i class="fas fa-shopping-bag"></i>
+            <h3>Bag is empty</h3>
+            <p>Add something delicious 🔥</p>
+        </div>
+    </div>
+    <div class="cart-footer" id="cartFooter" style="display:none;">
+        <div class="summary-row total">
+            <span>Total</span>
+            <span id="cartTotal">₹0</span>
+        </div>
+        <div class="payment-method-section">
+            <h4>Pay via</h4>
+            <div class="payment-buttons">
+                <button class="pay-method-btn active" id="btnCash" onclick="selectPayment('cash')">
+                    <i class="fas fa-money-bill-wave"></i> Cash
+                </button>
+                <button class="pay-method-btn" id="btnUpi" onclick="selectPayment('upi')">
+                    <i class="fas fa-qrcode"></i> UPI
+                </button>
+            </div>
+        </div>
+        <button class="checkout-btn" onclick="placeOrder()">
+            Place Order <i class="fas fa-arrow-right"></i>
+        </button>
+    </div>
+</div>
+
+<!-- BUY NOW MODAL -->
+<div class="modal-overlay" id="buyNowModal" style="display:none;">
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeBuyNow()"><i class="fas fa-xmark"></i></button>
+        <div class="modal-item-details">
+            <div class="modal-img-wrapper"><img id="modalItemImg" src="" alt=""></div>
+            <h3 id="modalItemName"></h3>
+            <p class="modal-price" id="modalItemPrice"></p>
+        </div>
+        <div class="modal-quantity">
+            <label>Qty</label>
+            <div class="qty-control">
+                <button onclick="changeModalQty(-1)"><i class="fas fa-minus"></i></button>
+                <span id="modalQty">1</span>
+                <button onclick="changeModalQty(1)"><i class="fas fa-plus"></i></button>
+            </div>
+        </div>
+        <div class="modal-total"><span>Total</span><span id="modalTotal">₹0</span></div>
+        <div class="payment-method-section">
+            <h4>Pay via</h4>
+            <div class="payment-buttons">
+                <button class="pay-method-btn active" id="modalBtnCash" onclick="selectModalPayment('cash')"><i class="fas fa-money-bill-wave"></i> Cash</button>
+                <button class="pay-method-btn" id="modalBtnUpi" onclick="selectModalPayment('upi')"><i class="fas fa-qrcode"></i> UPI</button>
+            </div>
+        </div>
+        <button class="checkout-btn" onclick="buyNowOrder()"><i class="fas fa-bolt"></i> Buy Now</button>
+    </div>
+</div>
+
+<!-- SUCCESS MODAL -->
+<div class="modal-overlay" id="orderSuccessModal" style="display:none;">
+    <div class="modal-content success-modal">
+        <div class="confetti-container" id="confettiContainer"></div>
+        <div class="success-icon"><i class="fas fa-check"></i></div>
+        <h2>Order Placed! 🎉</h2>
+        <p class="success-subtitle">We're preparing your food</p>
+        <div class="order-id-display">
+            <span class="order-id-label">ORDER ID</span>
+            <span class="order-id-num">#<span id="successOrderId"></span></span>
+        </div>
+        <div id="paymentInfo"></div>
+        <button class="checkout-btn" onclick="closeSuccessModal()">Track Order</button>
+    </div>
+</div>
+
+<div id="toastContainer"></div>
+<script src="js/customer.js"></script>
+</body>
+</html>

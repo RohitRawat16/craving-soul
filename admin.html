@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Craving Soul</title>
+    <link rel="stylesheet" href="css/admin.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="admin-header">
+    <div class="header-content">
+        <div class="logo">
+            <i class="fas fa-shield-halved"></i>
+            <h1>Admin Panel</h1>
+        </div>
+        <div class="header-stats">
+            <div class="stat-badge">
+                <i class="fas fa-bell"></i>
+                <span id="activeOrders">0</span>
+            </div>
+            <div class="stat-badge earnings">
+                <i class="fas fa-indian-rupee-sign"></i>
+                <span id="totalEarnings">0</span>
+            </div>
+        </div>
+    </div>
+</header>
+
+<!-- TAB NAVIGATION (Naya Sales Tab add kiya hai) -->
+<nav class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('orders')">
+        <i class="fas fa-clipboard-list"></i> Orders
+    </button>
+    <button class="tab-btn" onclick="switchTab('analytics')">
+        <i class="fas fa-chart-pie"></i> Sales
+    </button>
+    <button class="tab-btn" onclick="switchTab('menu')">
+        <i class="fas fa-utensils"></i> Menu
+    </button>
+</nav>
+
+<!-- ===== ORDERS TAB ===== -->
+<section class="tab-content active" id="tab-orders">
+    <div class="search-container">
+        <i class="fas fa-search"></i>
+        <input type="text" id="orderSearch" placeholder="Search by Customer Name or Order ID..." oninput="filterOrders()">
+    </div>
+    <div class="orders-container" id="ordersContainer">
+        <div class="no-orders" id="noOrders">
+            <i class="fas fa-inbox"></i>
+            <h3>No orders yet</h3>
+            <p>Waiting for customers...</p>
+        </div>
+    </div>
+</section>
+
+<!-- ===== 📊 SALES ANALYTICS TAB (NAYA) ===== -->
+<section class="tab-content" id="tab-analytics">
+    <div class="analytics-header-box">
+        <h2>Item-wise Sales Report</h2>
+        <p>Track which items are generating the most revenue.</p>
+    </div>
+    <div class="analytics-grid" id="analyticsGrid">
+        <!-- Sales data will load here dynamically -->
+    </div>
+</section>
+
+<!-- ===== MENU MANAGER TAB ===== -->
+<section class="tab-content" id="tab-menu">
+    <div class="add-item-card">
+        <h3><i class="fas fa-plus-circle"></i> Add New Item</h3>
+        <form id="addItemForm" onsubmit="addMenuItem(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Item Name</label>
+                    <input type="text" id="itemName" placeholder="e.g. Veg Burger" required>
+                </div>
+                <div class="form-group">
+                    <label>Price (₹)</label>
+                    <input type="number" id="itemPrice" placeholder="e.g. 60" required min="1">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="itemDesc" placeholder="Short description..." required>
+            </div>
+            <div class="form-group">
+                <label>Image URL</label>
+                <input type="url" id="itemImage" placeholder="https://... (image link)">
+            </div>
+            <button type="submit" class="btn-add-item">
+                <i class="fas fa-plus"></i> Add to Menu
+            </button>
+        </form>
+    </div>
+    <div class="menu-list" id="menuList"></div>
+</section>
+
+<!-- QR Modal for Admin -->
+<div class="modal-overlay" id="adminPayModal" style="display:none;">
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeAdminPayModal()"><i class="fas fa-times"></i></button>
+        <h2 style="color:#FF5A00; text-align:center; margin-bottom:15px;">
+            <i class="fas fa-qrcode"></i> Receive Payment
+        </h2>
+        <div class="qr-container" style="text-align:center;">
+            <img id="adminQrImg" src="" alt="QR Code" style="width:180px; height:180px; object-fit:contain;">
+        </div>
+        <div style="text-align:center; margin:15px 0;">
+            <span style="color:#A1A1AA;">Amount to Collect:</span><br>
+            <span style="font-size:36px; font-weight:900; color:#FACC15;" id="adminPayAmount">₹0</span>
+        </div>
+        <button class="btn-add-item" onclick="closeAdminPayModal()" style="margin-top:10px;">
+            <i class="fas fa-check"></i> Done
+        </button>
+    </div>
+</div>
+
+<audio id="notifSound" preload="auto"><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg"></audio>
+
+<script src="js/admin.js"></script>
+</body>
+</html>
