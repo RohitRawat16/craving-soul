@@ -18,7 +18,7 @@ const db = firebase.database();
 // =====================================================
 // ⚠️ APNA UPI ID ZAROOR CHANGE KARNA
 // =====================================================
-const UPI_ID = "7678355616@kotakbank";         // <-- Yahan apna real Paytm / PhonePe / GPay UPI ID daal
+const UPI_ID = "7678355616@ybl";         // <-- Yahan apna real Paytm / PhonePe / GPay UPI ID daal
 const UPI_NAME = "Craving Soul";        // <-- Display Name
 const QR_IMAGE_FALLBACK = "images/qr-code.png"; 
 
