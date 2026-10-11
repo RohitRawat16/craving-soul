@@ -15,352 +15,288 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// =====================================================
-// ⚠️ APNA UPI ID ZAROOR CHANGE KARNA
-// =====================================================
-const UPI_ID = "yourupi@paytm";         // <-- Yahan apna real Paytm / PhonePe / GPay UPI ID daal
-const UPI_NAME = "Craving Soul";        // <-- Display Name
-const QR_IMAGE_FALLBACK = "images/hello.png"; 
-
-// ===== STATE =====
-let cart = [];
-let menuItems = [];
-let currentBuyNowItem = null;
-let modalQty = 1;
-let selectedPayment = 'cash';
-let modalPayment = 'cash';
-let currentOrderId = null;
-let pendingOrderData = null;
+const QR_IMAGE = "images/qr-code.png";
+let isFirstLoad = true;
+let allOrdersData = []; 
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', function () {
-    listenToUpiSettings();
-    initRealtimeMenu();
-    loadCartFromStorage();
-    updateCartUI();
-    checkExistingOrder();
+    listenToRealtimeOrders();
+    listenToRealtimeMenu();
+    loadUpiSettings(); 
 });
 
-// Dynamic UPI settings from Admin Firebase DB if configured
-function listenToUpiSettings() {
+document.addEventListener('click', function () {
+    const audio = document.getElementById('notifSound');
+    if (audio) { audio.play().then(() => audio.pause()).catch(() => {}); }
+}, { once: true });
+
+function playNotification() {
+    const audio = document.getElementById('notifSound');
+    if (audio) { audio.currentTime = 0; audio.play().catch(e => console.log("Sound blocked by browser.")); }
+}
+
+// =====================================================
+// 📱 UPI SETTINGS
+// =====================================================
+function loadUpiSettings() {
     db.ref('settings/upi').on('value', function(snapshot) {
         const data = snapshot.val();
         if(data) {
-            if(data.upiId) UPI_ID = data.upiId;
-            if(data.upiName) UPI_NAME = data.upiName;
+            if(document.getElementById('adminUpiId')) document.getElementById('adminUpiId').value = data.upiId || '';
+            if(document.getElementById('adminUpiName')) document.getElementById('adminUpiName').value = data.upiName || '';
         }
     });
 }
 
-function initRealtimeMenu() {
-    db.ref('menu').on('value', function (snapshot) {
-        const data = snapshot.val();
-        if (data) menuItems = Object.keys(data).map(key => ({ id: key, ...data[key] }));
-        else seedDefaultMenu();
-        renderMenu();
+function saveUpiSettings(e) {
+    e.preventDefault();
+    const upiId = document.getElementById('adminUpiId').value.trim();
+    const upiName = document.getElementById('adminUpiName').value.trim();
+    if(!upiId || !upiName) return;
+    db.ref('settings/upi').set({ upiId: upiId, upiName: upiName }).then(() => { showAdminToast('UPI Settings Saved! 📱'); });
+}
+
+// =====================================================
+// 🔔 REALTIME ORDERS & SPLIT TABS LOGIC
+// =====================================================
+function listenToRealtimeOrders() {
+    const ordersRef = db.ref('orders');
+    ordersRef.on('child_added', function (snapshot) { if (!isFirstLoad) playNotification(); });
+    ordersRef.on('value', function (snapshot) {
+        allOrdersData = snapshot.val() ? Object.values(snapshot.val()) : [];
+        renderAllOrders(); // ⚠️ Ye dono tabs ko handle karega
+        updateSalesAnalytics();
+        isFirstLoad = false;
     });
 }
 
-function seedDefaultMenu() {
-    const defaultMenu = {
-        item_1: { name: "Signature Veg Burger", desc: "Crispy aloo tikki, fresh veggies & secret sauce", price: 60, image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600", badge: "best" },
-        item_2: { name: "Tandoori Paneer Roll", desc: "Tandoori paneer in rumali with mint chutney", price: 80, image: "https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=600", badge: "" },
-        item_3: { name: "Peri-Peri Fries", desc: "Golden fries, extra crispy with spicy seasoning", price: 50, image: "https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=600", badge: "" },
-        item_4: { name: "Classic Cold Coffee", desc: "Creamy blended coffee with ice cream", price: 70, image: "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=600", badge: "new" },
-        item_5: { name: "Delhi Chole Bhature", desc: "Spicy chole + fluffy bhature", price: 90, image: "https://images.unsplash.com/photo-1626132647523-66f5bf380027?w=600", badge: "" },
-        item_6: { name: "Steamed Momos (8pcs)", desc: "Soft veg momos with fiery red chutney", price: 60, image: "https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?w=600", badge: "best" }
-    };
-    db.ref('menu').set(defaultMenu);
-}
+function renderAllOrders() {
+    const activeContainer = document.getElementById('ordersContainer');
+    const historyContainer = document.getElementById('completedOrdersContainer');
+    const activeSearch = document.getElementById('orderSearch') ? document.getElementById('orderSearch').value.toLowerCase() : '';
+    const historySearch = document.getElementById('historySearch') ? document.getElementById('historySearch').value.toLowerCase() : '';
 
-// ===== RENDER MENU WITH DYNAMIC CARD QUANTITY SELECTOR =====
-function renderMenu() {
-    const grid = document.getElementById('menuGrid'); if (!grid) return; grid.innerHTML = '';
-    
-    if(menuItems.length === 0) { grid.innerHTML = '<p style="color:#A1A1AA;text-align:center;width:100%;">Menu is loading...</p>'; return; }
+    // Stats
+    const activeCount = allOrdersData.filter(o => o.status !== 'completed').length;
+    const totalEarnings = allOrdersData.filter(o => o.status === 'completed' || o.status === 'ready').reduce((sum, o) => sum + o.total, 0);
+    if(document.getElementById('activeOrders')) document.getElementById('activeOrders').textContent = activeCount;
+    if(document.getElementById('totalEarnings')) document.getElementById('totalEarnings').textContent = totalEarnings;
 
-    menuItems.forEach(function (item, index) {
-        const card = document.createElement('div'); card.className = 'menu-card'; card.style.animationDelay = (index * 0.05) + 's';
-        const inCart = cart.find(c => c.id == item.id); const cartQty = inCart ? inCart.qty : 0;
+    // SPLIT DATA
+    let activeOrders = allOrdersData.filter(o => o.status !== 'completed');
+    let completedOrders = allOrdersData.filter(o => o.status === 'completed');
 
-        let badgeHTML = '';
-        if (item.badge === 'best') badgeHTML = '<span class="menu-badge"><i class="fas fa-star"></i> Bestseller</span>';
-        else if (item.badge === 'new') badgeHTML = '<span class="menu-badge new">New</span>';
+    // APPLY SEARCH
+    if(activeSearch) activeOrders = activeOrders.filter(o => o.id.toString().includes(activeSearch) || (o.customerName && o.customerName.toLowerCase().includes(activeSearch)));
+    if(historySearch) completedOrders = completedOrders.filter(o => o.id.toString().includes(historySearch) || (o.customerName && o.customerName.toLowerCase().includes(historySearch)));
 
-        let actionHTML = '';
-        if (cartQty > 0) {
-            actionHTML = `
-                <div class="card-qty-control" id="addBtnSlot-${item.id}">
-                    <button onclick="updateCartQty('${item.id}', -1)"><i class="fas fa-minus"></i></button>
-                    <span>${cartQty}</span>
-                    <button onclick="updateCartQty('${item.id}', 1)"><i class="fas fa-plus"></i></button>
-                </div>`;
-        } else {
-            actionHTML = `
-                <div id="addBtnSlot-${item.id}" style="flex:1;">
-                    <button class="btn-add-cart" onclick="addToCart('${item.id}')">
-                        <i class="fas fa-plus"></i> Add
-                    </button>
-                </div>`;
-        }
+    // SORT LATEST FIRST
+    activeOrders.sort((a, b) => b.timestamp - a.timestamp);
+    completedOrders.sort((a, b) => b.timestamp - a.timestamp);
 
-        card.innerHTML = `
-            <div class="menu-card-img-wrapper">
-                ${badgeHTML}
-                <img src="${item.image}" class="menu-card-img" alt="${item.name}" onerror="this.src='https://via.placeholder.com/400x300/1A1A22/FF5A00?text=Food'">
-            </div>
-            <div class="menu-card-body">
-                <h3 class="menu-card-name">${item.name}</h3>
-                <p class="menu-card-desc">${item.desc || ''}</p>
-                <div class="menu-card-bottom"><p class="menu-card-price">₹${item.price}</p></div>
-                <div class="menu-card-actions">
-                    ${actionHTML}
-                    <button class="btn-buy-now" onclick="openBuyNow('${item.id}')"><i class="fas fa-bolt"></i> Buy</button>
-                </div>
-            </div>`;
-        grid.appendChild(card);
-    });
-}
-
-function addToCart(itemId) {
-    const item = menuItems.find(i => i.id == itemId); if (!item) return;
-    const existing = cart.find(c => c.id == itemId);
-    if (existing) existing.qty += 1; else cart.push({ id: item.id, name: item.name, price: item.price, image: item.image, qty: 1 });
-    saveCartToStorage(); updateCartUI(); updateMenuButtons(); showToast(`${item.name} added! 🍔`);
-}
-
-function updateMenuButtons() {
-    menuItems.forEach(item => {
-        const slot = document.getElementById(`addBtnSlot-${item.id}`); if (!slot) return;
-        const inCart = cart.find(c => c.id == item.id); const cartQty = inCart ? inCart.qty : 0;
-
-        if (cartQty > 0) {
-            slot.className = 'card-qty-control';
-            slot.style.flex = '1';
-            slot.innerHTML = `
-                <button onclick="updateCartQty('${item.id}', -1)"><i class="fas fa-minus"></i></button>
-                <span>${cartQty}</span>
-                <button onclick="updateCartQty('${item.id}', 1)"><i class="fas fa-plus"></i></button>
-            `;
-        } else {
-            slot.className = '';
-            slot.style.flex = '1';
-            slot.innerHTML = `
-                <button class="btn-add-cart" onclick="addToCart('${item.id}')">
-                    <i class="fas fa-plus"></i> Add
-                </button>
-            `;
-        }
-    });
-}
-
-function saveCartToStorage() { localStorage.setItem('stall_cart', JSON.stringify(cart)); }
-function loadCartFromStorage() { const stored = localStorage.getItem('stall_cart'); if (stored) { try { cart = JSON.parse(stored); } catch (e) { cart = []; } } }
-function toggleCart() { document.getElementById('cartSidebar').classList.toggle('show'); document.getElementById('cartOverlay').classList.toggle('show'); }
-
-function updateCartUI() {
-    const countEl = document.getElementById('cartCount'); const itemsEl = document.getElementById('cartItems'); 
-    const footerEl = document.getElementById('cartFooter'); const totalEl = document.getElementById('cartTotal'); 
-    const subtitleEl = document.getElementById('cartSubtitle');
-    
-    const floatBar = document.getElementById('floatCartBar'); const floatCount = document.getElementById('floatCount'); 
-    const floatTotal = document.getElementById('floatTotal'); const floatItemsText = document.getElementById('floatItemsText');
-
-    let totalItems = 0; let totalPrice = 0;
-    cart.forEach(item => { totalItems += item.qty; totalPrice += item.price * item.qty; });
-
-    if (countEl) { countEl.textContent = totalItems; countEl.classList.remove('bump'); void countEl.offsetWidth; countEl.classList.add('bump'); }
-    if (subtitleEl) subtitleEl.textContent = `${totalItems} items`;
-
-    if (cart.length === 0) {
-        if (itemsEl) itemsEl.innerHTML = `<div class="empty-cart"><i class="fas fa-shopping-bag"></i><h3>Bag is empty</h3><p>Add something delicious 🔥</p></div>`;
-        if (footerEl) footerEl.style.display = 'none';
-        if (floatBar) floatBar.style.display = 'none';
-        return;
+    // RENDER ACTIVE
+    if(activeOrders.length === 0) {
+        activeContainer.innerHTML = `<div class="no-orders"><i class="fas fa-inbox"></i><h3>No active orders</h3></div>`;
+    } else {
+        let activeHtml = '';
+        activeOrders.forEach(order => { activeHtml += generateOrderCardHTML(order); });
+        activeContainer.innerHTML = activeHtml;
     }
 
-    if (footerEl) footerEl.style.display = 'block';
-    let html = '';
-    cart.forEach(item => {
-        html += `<div class="cart-item"><img src="${item.image}" onerror="this.src='https://via.placeholder.com/55'"><div class="cart-item-info"><div class="cart-item-name">${item.name}</div><div class="cart-item-price-each">₹${item.price} each</div><div class="cart-item-subtotal">₹${item.price * item.qty}</div></div><div class="cart-item-right"><div class="qty-control"><button onclick="updateCartQty('${item.id}', -1)"><i class="fas fa-minus"></i></button><span>${item.qty}</span><button onclick="updateCartQty('${item.id}', 1)"><i class="fas fa-plus"></i></button></div><button class="cart-item-remove" onclick="removeFromCart('${item.id}')"><i class="fas fa-trash"></i></button></div></div>`;
-    });
-    if (itemsEl) itemsEl.innerHTML = html;
-    if (totalEl) totalEl.textContent = `₹${totalPrice}`;
-
-    if (floatBar) { floatBar.style.display = 'flex'; if (floatCount) floatCount.textContent = totalItems; if (floatTotal) floatTotal.textContent = `₹${totalPrice}`; if (floatItemsText) floatItemsText.textContent = totalItems === 1 ? 'item added' : 'items added'; }
+    // RENDER HISTORY
+    if(completedOrders.length === 0) {
+        historyContainer.innerHTML = `<div class="no-orders"><i class="fas fa-history"></i><h3>No completed orders</h3></div>`;
+    } else {
+        let historyHtml = '';
+        completedOrders.forEach(order => { historyHtml += generateOrderCardHTML(order); });
+        historyContainer.innerHTML = historyHtml;
+    }
 }
 
-function updateCartQty(itemId, delta) { 
-    const item = cart.find(c => c.id == itemId); if (!item) return; 
-    item.qty += delta; 
-    if (item.qty <= 0) cart = cart.filter(c => c.id != itemId); 
-    saveCartToStorage(); updateCartUI(); updateMenuButtons(); 
-}
+function generateOrderCardHTML(order) {
+    const time = new Date(order.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const isCompleted = order.status === 'completed';
 
-function removeFromCart(itemId) { cart = cart.filter(c => c.id != itemId); saveCartToStorage(); updateCartUI(); updateMenuButtons(); }
-function selectPayment(method) { selectedPayment = method; document.getElementById('btnCash').classList.toggle('active', method === 'cash'); document.getElementById('btnUpi').classList.toggle('active', method === 'upi'); }
-function selectModalPayment(method) { modalPayment = method; document.getElementById('modalBtnCash').classList.toggle('active', method === 'cash'); document.getElementById('modalBtnUpi').classList.toggle('active', method === 'upi'); }
+    const badges = {
+        received: '<span class="order-status-badge badge-received"><i class="fas fa-inbox"></i> Received</span>',
+        preparing: '<span class="order-status-badge badge-preparing"><i class="fas fa-fire"></i> Preparing</span>',
+        ready: '<span class="order-status-badge badge-ready"><i class="fas fa-check-circle"></i> Ready</span>',
+        completed: '<span class="order-status-badge badge-completed"><i class="fas fa-flag-checkered"></i> Completed</span>'
+    };
 
-function placeOrder() {
-    if (cart.length === 0) return; let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-    pendingOrderData = { items: JSON.parse(JSON.stringify(cart)), total: total, payment: selectedPayment }; showNameModal();
-}
+    let paymentBadge = ''; let verifyButton = ''; let highlightStyle = '';
 
-function openBuyNow(itemId) {
-    const item = menuItems.find(i => i.id == itemId); if (!item) return;
-    currentBuyNowItem = item; modalQty = 1; modalPayment = 'cash';
-    document.getElementById('modalItemImg').src = item.image; document.getElementById('modalItemName').textContent = item.name; document.getElementById('modalItemPrice').textContent = `₹${item.price}`; document.getElementById('modalQty').textContent = '1'; document.getElementById('modalTotal').textContent = `₹${item.price}`; document.getElementById('modalBtnCash').classList.add('active'); document.getElementById('modalBtnUpi').classList.remove('active'); document.getElementById('buyNowModal').style.display = 'flex';
-}
+    if (order.payment === 'upi') {
+        if (order.paymentStatus === 'verified') {
+            paymentBadge = '<span class="order-payment-badge pay-upi" style="color:#4ADE80; border:1px solid #4ADE80;"><i class="fas fa-check-circle"></i> UPI Verified ✅</span>';
+        } else if (order.paymentStatus === 'claimed_paid') {
+            highlightStyle = 'border: 2px solid #FACC15; box-shadow: 0 0 20px rgba(250, 204, 21, 0.2); background: rgba(250, 204, 21, 0.05);';
+            paymentBadge = `<span class="order-payment-badge pay-warning"><i class="fas fa-exclamation-triangle"></i> Check Phone: ₹${order.total}</span>`;
+            if(!isCompleted) verifyButton = `<button class="order-btn btn-verify" onclick="verifyPayment(${order.id})"><i class="fas fa-check-double"></i> Verify Payment Received</button>`;
+        } else {
+            paymentBadge = '<span class="order-payment-badge pay-upi"><i class="fas fa-mobile-screen"></i> UPI Pending</span>';
+        }
+    } else {
+        paymentBadge = '<span class="order-payment-badge pay-cash"><i class="fas fa-money-bill-wave"></i> Cash to Collect</span>';
+    }
 
-function closeBuyNow() { document.getElementById('buyNowModal').style.display = 'none'; }
-function changeModalQty(delta) { modalQty += delta; if (modalQty < 1) modalQty = 1; if (modalQty > 20) modalQty = 20; document.getElementById('modalQty').textContent = modalQty; document.getElementById('modalTotal').textContent = `₹${currentBuyNowItem.price * modalQty}`; }
+    let itemsHtml = '';
+    order.items.forEach(item => { itemsHtml += `<div class="order-item-row"><span>${item.name}</span><span class="order-item-qty">×${item.qty} = ₹${item.price * item.qty}</span></div>`; });
 
-function buyNowOrder() {
-    if (!currentBuyNowItem) return;
-    const itemId = currentBuyNowItem.id; const itemName = currentBuyNowItem.name; const itemPrice = currentBuyNowItem.price; const qty = modalQty; const total = itemPrice * qty;
-    closeBuyNow();
-    pendingOrderData = { items: [{ id: itemId, name: itemName, price: itemPrice, qty: qty }], total: total, payment: modalPayment };
-    showNameModal();
-}
+    let actions = '';
+    if (!isCompleted) {
+        if (order.status === 'received') actions += `<button class="order-btn btn-preparing" onclick="updateOrderStatus(${order.id}, 'preparing')"><i class="fas fa-fire"></i> Start Preparing</button>`;
+        if (order.status === 'preparing') actions += `<button class="order-btn btn-ready" onclick="updateOrderStatus(${order.id}, 'ready')"><i class="fas fa-bell-concierge"></i> Mark Ready</button>`;
+        if (order.status === 'ready') actions += `<button class="order-btn btn-done" onclick="updateOrderStatus(${order.id}, 'completed')"><i class="fas fa-flag-checkered"></i> Complete Order</button>`;
+        if (order.payment === 'cash') actions += `<button class="order-btn btn-pay-now" onclick="showPayNow(${order.id}, ${order.total})"><i class="fas fa-qrcode"></i> Show QR (₹${order.total})</button>`;
+    }
+    
+    // Delete is available in both tabs
+    actions += `<button class="order-btn btn-delete-order" onclick="deleteOrder(${order.id})"><i class="fas fa-trash"></i> Delete</button>`;
 
-function showNameModal() {
-    const existing = document.getElementById('nameModal'); if (existing) existing.remove();
-    const modal = document.createElement('div'); modal.id = 'nameModal'; modal.className = 'modal-overlay'; modal.style.display = 'flex';
-    modal.innerHTML = `<div class="modal-content" style="text-align:center;"><h2 style="color:#FF5A00; margin-bottom:5px;">Your Name?</h2><p style="color:#A1A1AA; font-size:12px; margin-bottom:15px;">We'll call your name when order is ready!</p><input type="text" id="customerNameInput" placeholder="Enter your full name..." style="width:100%; padding:12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; font-size:14px; text-align:center; margin-bottom:15px; outline:none;" onfocus="this.style.borderColor='#FF5A00'"><button class="checkout-btn" onclick="submitNameAndProceed()">Proceed <i class="fas fa-arrow-right"></i></button></div>`;
-    document.body.appendChild(modal); setTimeout(() => document.getElementById('customerNameInput').focus(), 300);
-    document.getElementById('customerNameInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitNameAndProceed(); });
-}
-
-function submitNameAndProceed() {
-    const name = document.getElementById('customerNameInput').value.trim(); if (!name) return showToast('Please enter your name! ✏️');
-    document.getElementById('nameModal').remove();
-    if (pendingOrderData.payment === 'upi') initiateUPIPayment(pendingOrderData.total, name); else pushOrderToFirebase(pendingOrderData.items, pendingOrderData.total, 'cash', 'pending', name);
-}
-
-// =====================================================
-// 💸 FAIL-SAFE UPI PAYMENT MODAL (DYNAMIC QR + COPY UPI)
-// =====================================================
-function initiateUPIPayment(amount, customerName) {
-    showUPIModal(amount, customerName);
-}
-
-function showUPIModal(amount, customerName) {
-    const existing = document.getElementById('upiPaymentModal');
-    if (existing) existing.remove();
-
-    // Generate Dynamic QR Code with exact bill amount
-    const upiString = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&am=${amount}&cu=INR&tn=${encodeURIComponent('Order - ' + customerName)}`;
-    const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiString)}`;
-
-    const modal = document.createElement('div');
-    modal.id = 'upiPaymentModal';
-    modal.className = 'modal-overlay';
-    modal.style.display = 'flex';
-    modal.innerHTML = `
-        <div class="modal-content" style="text-align:center; max-width:380px;">
-            <button class="modal-close" onclick="cancelUPIPayment()"><i class="fas fa-xmark"></i></button>
-            <h2 style="color:#FF5A00; font-size:20px; margin-bottom:10px;"><i class="fas fa-qrcode"></i> Scan & Pay</h2>
-            
-            <div style="background:#fff; padding:12px; border-radius:16px; display:inline-block; margin-bottom:12px; box-shadow:0 8px 20px rgba(0,0,0,0.4);">
-                <img src="${dynamicQrUrl}" alt="Scan QR Code" style="width:180px; height:180px; object-fit:contain; display:block;" onerror="this.src='${QR_IMAGE_FALLBACK}'">
+    return `
+        <div class="order-card status-${order.status}" id="order-${order.id}" style="${highlightStyle}">
+            <div class="order-top">
+                <span class="order-id"><i class="fas fa-receipt"></i> #${order.id}</span>
+                <span class="order-time"><i class="fas fa-clock"></i> ${time}</span>
+                ${badges[order.status] || ''}
             </div>
-
-            <div style="font-size:28px; font-weight:900; color:#FACC15; margin-bottom:12px;">₹${amount}</div>
-
-            <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:10px; border-radius:12px; margin-bottom:15px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
-                <span style="font-size:12px; color:#A1A1AA; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${UPI_ID}</span>
-                <button onclick="copyUpiId()" style="background:#FF5A00; border:none; color:white; padding:6px 12px; border-radius:8px; font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">
-                    <i class="fas fa-copy"></i> Copy UPI
-                </button>
+            <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+                <i class="fas fa-user" style="color:#FF5A00;"></i>
+                <span style="font-weight:700; color:#fff; font-size:16px;">${order.customerName}</span>
             </div>
-
-            <p style="font-size:11px; color:#A1A1AA; margin-bottom:15px;">Scan QR via GPay / PhonePe / Paytm OR Copy UPI ID & Pay</p>
-
-            <div style="display:flex; gap:10px;">
-                <button class="checkout-btn" style="background:#22C55E; box-shadow:none; flex:1;" onclick="confirmUPIPayment('${customerName}')">
-                    <i class="fas fa-check"></i> I've Paid
-                </button>
-                <button class="checkout-btn" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); box-shadow:none; flex:1; color:#fff;" onclick="cancelUPIPayment()">
-                    Cancel
-                </button>
+            ${paymentBadge}
+            <div class="order-items-list">${itemsHtml}
+                <div class="order-total-row"><span>Total</span><span class="order-total-value">₹${order.total}</span></div>
             </div>
+            ${verifyButton}
+            <div class="order-actions">${actions}</div>
         </div>`;
-    document.body.appendChild(modal);
 }
 
-function copyUpiId() {
-    navigator.clipboard.writeText(UPI_ID).then(() => {
-        showToast('UPI ID Copied! Paste in GPay/PhonePe 📋');
-    }).catch(() => {
-        showToast(`UPI ID: ${UPI_ID}`);
+function verifyPayment(orderId) { if(confirm("Did you check your PhonePe/Paytm and received the money?")) { db.ref('orders/' + orderId).update({ paymentStatus: 'verified' }); showAdminToast('Payment Verified! ✅'); } }
+function updateOrderStatus(orderId, newStatus) { db.ref('orders/' + orderId).update({ status: newStatus }); }
+function deleteOrder(orderId) { if (confirm(`Delete Order #${orderId}?`)) db.ref('orders/' + orderId).remove(); }
+function showPayNow(orderId, total) { document.getElementById('adminQrImg').src = QR_IMAGE; document.getElementById('adminPayAmount').textContent = `₹${total}`; document.getElementById('adminPayModal').style.display = 'flex'; }
+function closeAdminPayModal() { document.getElementById('adminPayModal').style.display = 'none'; }
+
+// =====================================================
+// 📊 SALES ANALYTICS LOGIC
+// =====================================================
+function updateSalesAnalytics() {
+    const itemStats = {};
+    allOrdersData.forEach(order => {
+        if(order.items) {
+            order.items.forEach(item => {
+                if(!itemStats[item.name]) itemStats[item.name] = { qty: 0, revenue: 0 };
+                itemStats[item.name].qty += item.qty; itemStats[item.name].revenue += (item.price * item.qty);
+            });
+        }
     });
-}
 
-function confirmUPIPayment(customerName) { 
-    const modal = document.getElementById('upiPaymentModal');
-    if (modal) modal.remove(); 
-    pushOrderToFirebase(pendingOrderData.items, pendingOrderData.total, 'upi', 'claimed_paid', customerName); 
-}
+    const grid = document.getElementById('analyticsGrid'); if(!grid) return;
+    if(Object.keys(itemStats).length === 0) { grid.innerHTML = '<p style="text-align:center;color:#888;padding:30px;">No sales data available yet.</p>'; return; }
 
-function cancelUPIPayment() { 
-    const modal = document.getElementById('upiPaymentModal');
-    if (modal) modal.remove(); 
-    showToast('Payment Cancelled ❌'); 
-    pendingOrderData = null; 
+    const sortedStats = Object.keys(itemStats).map(name => { return { name: name, ...itemStats[name] }; }).sort((a, b) => b.revenue - a.revenue);
+    let html = '';
+    sortedStats.forEach((stat, index) => {
+        let rankColor = index === 0 ? '#FACC15' : (index === 1 ? '#94A3B8' : (index === 2 ? '#D97706' : '#3F3F46'));
+        let rankText = index === 0 ? '<i class="fas fa-trophy"></i>' : `#${index + 1}`;
+        html += `<div class="analytics-card"><div class="analytics-rank" style="background:${rankColor};">${rankText}</div><div class="analytics-info"><div class="analytics-name">${stat.name}</div><div class="analytics-qty">Sold: <span>${stat.qty} units</span></div></div><div class="analytics-amount"><div class="analytics-label">Total Revenue</div><div class="analytics-revenue">₹${stat.revenue}</div></div></div>`;
+    });
+    grid.innerHTML = html;
 }
 
 // =====================================================
-// 🚀 PUSH ORDER TO FIREBASE
+// 📋 MENU MANAGER (ADD, DELETE, EDIT ✏️)
 // =====================================================
-function pushOrderToFirebase(items, total, paymentMethod, paymentStatus, customerName) {
-    const orderId = Math.floor(1000 + Math.random() * 9000);
-    const orderData = { id: orderId, customerName: customerName, items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })), total: total, payment: paymentMethod, paymentStatus: paymentStatus, status: 'received', timestamp: Date.now() };
+function listenToRealtimeMenu() {
+    db.ref('menu').on('value', function (snapshot) {
+        const list = document.getElementById('menuList'); if(!list) return;
+        const menuData = snapshot.val();
+        if (!menuData) { list.innerHTML = '<p style="text-align:center; color:#555; padding:30px;">No items in menu.</p>'; return; }
+        
+        let html = '';
+        Object.keys(menuData).forEach(key => {
+            const item = menuData[key];
+            // Escape strings for onclick
+            const safeName = item.name.replace(/'/g, "\\'");
+            const safeDesc = (item.desc || '').replace(/'/g, "\\'");
+            const safeImage = (item.image || '').replace(/'/g, "\\'");
 
-    db.ref('orders/' + orderId).set(orderData).then(() => {
-        cart = []; saveCartToStorage(); updateCartUI(); updateMenuButtons();
-        document.getElementById('cartSidebar').classList.remove('show'); document.getElementById('cartOverlay').classList.remove('show');
-        currentOrderId = orderId; localStorage.setItem('stall_my_order', orderId.toString()); pendingOrderData = null;
-        showSuccessModal(orderId, paymentMethod, paymentStatus, customerName); listenToOrderStatus(orderId);
+            html += `
+                <div class="menu-list-item">
+                    <img src="${item.image}" onerror="this.src='https://via.placeholder.com/60/1a1a2e/FF5A00?text=Food'">
+                    <div class="menu-list-details">
+                        <div class="menu-list-name">${item.name}</div>
+                        <div class="menu-list-desc">${item.desc}</div>
+                    </div>
+                    <span class="menu-list-price">₹${item.price}</span>
+                    <div class="menu-actions-right">
+                        <button class="btn-edit-item" onclick="openEditModal('${key}', '${safeName}', ${item.price}, '${safeDesc}', '${safeImage}')"><i class="fas fa-pen"></i></button>
+                        <button class="btn-delete-item" onclick="deleteMenuItem('${key}')"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>`;
+        });
+        list.innerHTML = html;
     });
 }
 
-function showSuccessModal(orderId, paymentMethod, paymentStatus, customerName) {
-    document.getElementById('successOrderId').textContent = orderId; const payInfo = document.getElementById('paymentInfo');
-    const nameLine = `<p style="margin-bottom:5px;"><i class="fas fa-user" style="color:#FF5A00;"></i> <strong>${customerName}</strong></p>`;
-    if (paymentMethod === 'upi') payInfo.innerHTML = nameLine + `<p><i class="fas fa-clock" style="color:#FACC15;"></i> <strong>Verifying Payment... ⏳</strong></p>`;
-    else payInfo.innerHTML = nameLine + `<p><i class="fas fa-money-bill-wave" style="color:#22C55E;"></i> Pay <strong>Cash</strong> at counter 💵</p>`;
-    document.getElementById('orderSuccessModal').style.display = 'flex';
-}
-function closeSuccessModal() { document.getElementById('orderSuccessModal').style.display = 'none'; showStatusTracker(); }
-
-function showStatusTracker() {
-    if (!currentOrderId) return;
-    db.ref('orders/' + currentOrderId).on('value', (snapshot) => {
-        const order = snapshot.val(); if (!order) return;
-        document.getElementById('trackOrderId').textContent = currentOrderId;
-        const itemsList = order.items.map(i => `${i.name} × ${i.qty}`).join(' | ');
-        let paymentText = '';
-        if(order.payment === 'upi') {
-            if(order.paymentStatus === 'verified') paymentText = '<span style="color:#22C55E;">UPI Verified ✅</span>'; else paymentText = '<span style="color:#FACC15;">Verifying... ⏳</span>';
-        } else paymentText = 'Cash';
-        document.getElementById('statusItems').innerHTML = `<p>👤 <strong>${order.customerName}</strong></p><p>📦 ${itemsList}</p><p style="margin-top:5px; font-weight:700;">Total: ₹${order.total} | ${paymentText}</p>`;
-        updateStatusSteps(order.status); document.getElementById('statusTracker').style.display = 'block';
+function addMenuItem(e) {
+    e.preventDefault();
+    const name = document.getElementById('itemName').value.trim(); const price = parseInt(document.getElementById('itemPrice').value); const desc = document.getElementById('itemDesc').value.trim();
+    const image = document.getElementById('itemImage').value.trim() || `https://via.placeholder.com/400x200/1A1A22/FF5A00?text=${encodeURIComponent(name)}`;
+    if (!name || !price || !desc) return;
+    
+    db.ref('menu').push().set({ name: name, desc: desc, price: price, image: image }).then(() => {
+        document.getElementById('addItemForm').reset(); showAdminToast(`${name} added! ✅`);
     });
 }
 
-function listenToOrderStatus(orderId) { db.ref('orders/' + orderId).on('value', (snapshot) => { const order = snapshot.val(); if (order) { updateStatusSteps(order.status); if (order.status === 'ready' && navigator.vibrate) navigator.vibrate([200, 100, 200]); } }); }
-function updateStatusSteps(status) {
-    const steps = ['received', 'preparing', 'ready']; const stepEls = { received: document.getElementById('step-received'), preparing: document.getElementById('step-preparing'), ready: document.getElementById('step-ready') }; const lines = { 0: document.getElementById('line1'), 1: document.getElementById('line2') };
-    const currentIndex = steps.indexOf(status); if (currentIndex === -1) return;
-    for (let key in stepEls) if (stepEls[key]) stepEls[key].classList.remove('active'); for (let key in lines) if (lines[key]) lines[key].classList.remove('active');
-    for (let i = 0; i <= currentIndex; i++) { if (stepEls[steps[i]]) stepEls[steps[i]].classList.add('active'); if (i > 0 && lines[i - 1]) lines[i - 1].classList.add('active'); }
+function deleteMenuItem(itemKey) { if (confirm('Delete this item?')) db.ref('menu/' + itemKey).remove().then(() => showAdminToast('Deleted! 🗑️')); }
+
+// ✏️ NAYA: EDIT MODAL LOGIC
+function openEditModal(key, name, price, desc, image) {
+    document.getElementById('editItemKey').value = key;
+    document.getElementById('editItemName').value = name;
+    document.getElementById('editItemPrice').value = price;
+    document.getElementById('editItemDesc').value = desc;
+    document.getElementById('editItemImage').value = image;
+    document.getElementById('editItemModal').style.display = 'flex';
 }
 
-function closeStatus() { document.getElementById('statusTracker').style.display = 'none'; }
-function checkExistingOrder() { const savedOrderId = localStorage.getItem('stall_my_order'); if (savedOrderId) { currentOrderId = parseInt(savedOrderId); showStatusTracker(); } }
+function closeEditModal() { document.getElementById('editItemModal').style.display = 'none'; }
 
-function showToast(message) {
-    const container = document.getElementById('toastContainer'); if (!container) return;
-    const toast = document.createElement('div'); toast.className = 'toast'; toast.innerHTML = message; container.appendChild(toast);
-    setTimeout(() => { toast.classList.add('toast-out'); setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250); }, 2500);
+function saveEditedItem(e) {
+    e.preventDefault();
+    const key = document.getElementById('editItemKey').value;
+    const name = document.getElementById('editItemName').value.trim();
+    const price = parseInt(document.getElementById('editItemPrice').value);
+    const desc = document.getElementById('editItemDesc').value.trim();
+    const image = document.getElementById('editItemImage').value.trim();
+
+    db.ref('menu/' + key).update({
+        name: name,
+        price: price,
+        desc: desc,
+        image: image
+    }).then(() => {
+        closeEditModal();
+        showAdminToast('Item Updated Successfully! ✏️');
+    });
+}
+
+// UTILS
+function switchTab(tab) { 
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); 
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active')); 
+    event.currentTarget.classList.add('active'); 
+    document.getElementById(`tab-${tab}`).classList.add('active'); 
+}
+
+function showAdminToast(message) {
+    const existing = document.querySelector('.admin-toast'); if (existing) existing.remove();
+    const toast = document.createElement('div'); toast.className = 'admin-toast'; toast.innerHTML = message;
+    document.body.appendChild(toast); setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 2500);
 }
