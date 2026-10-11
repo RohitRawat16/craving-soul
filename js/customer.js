@@ -15,15 +15,42 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-const UPI_ID = "7678355616@ibl";
-const UPI_NAME = "Craving Soul";
-const QR_IMAGE = "images/hello.png";
+// =====================================================
+// ⚠️ APNA UPI ID ZAROOR CHANGE KARNA
+// =====================================================
+const UPI_ID = "7678355616@kotakbank";         // <-- Yahan apna real Paytm / PhonePe / GPay UPI ID daal
+const UPI_NAME = "Craving Soul";        // <-- Display Name
+const QR_IMAGE_FALLBACK = "images/qr-code.png"; 
 
-let cart = []; let menuItems = []; let currentBuyNowItem = null; let modalQty = 1; let selectedPayment = 'cash'; let modalPayment = 'cash'; let currentOrderId = null; let pendingOrderData = null;
+// ===== STATE =====
+let cart = [];
+let menuItems = [];
+let currentBuyNowItem = null;
+let modalQty = 1;
+let selectedPayment = 'cash';
+let modalPayment = 'cash';
+let currentOrderId = null;
+let pendingOrderData = null;
 
+// ===== INIT =====
 document.addEventListener('DOMContentLoaded', function () {
-    initRealtimeMenu(); loadCartFromStorage(); updateCartUI(); checkExistingOrder();
+    listenToUpiSettings();
+    initRealtimeMenu();
+    loadCartFromStorage();
+    updateCartUI();
+    checkExistingOrder();
 });
+
+// Dynamic UPI settings from Admin Firebase DB if configured
+function listenToUpiSettings() {
+    db.ref('settings/upi').on('value', function(snapshot) {
+        const data = snapshot.val();
+        if(data) {
+            if(data.upiId) UPI_ID = data.upiId;
+            if(data.upiName) UPI_NAME = data.upiName;
+        }
+    });
+}
 
 function initRealtimeMenu() {
     db.ref('menu').on('value', function (snapshot) {
@@ -60,7 +87,6 @@ function renderMenu() {
         if (item.badge === 'best') badgeHTML = '<span class="menu-badge"><i class="fas fa-star"></i> Bestseller</span>';
         else if (item.badge === 'new') badgeHTML = '<span class="menu-badge new">New</span>';
 
-        // ➕ ➖ DYNAMIC ACTION BUTTON / COUNTER ON CARD
         let actionHTML = '';
         if (cartQty > 0) {
             actionHTML = `
@@ -103,7 +129,6 @@ function addToCart(itemId) {
     saveCartToStorage(); updateCartUI(); updateMenuButtons(); showToast(`${item.name} added! 🍔`);
 }
 
-// UPDATE BUTTONS ON MENU CARDS REALTIME
 function updateMenuButtons() {
     menuItems.forEach(item => {
         const slot = document.getElementById(`addBtnSlot-${item.id}`); if (!slot) return;
@@ -212,27 +237,81 @@ function submitNameAndProceed() {
     if (pendingOrderData.payment === 'upi') initiateUPIPayment(pendingOrderData.total, name); else pushOrderToFirebase(pendingOrderData.items, pendingOrderData.total, 'cash', 'pending', name);
 }
 
+// =====================================================
+// 💸 FAIL-SAFE UPI PAYMENT MODAL (DYNAMIC QR + COPY UPI)
+// =====================================================
 function initiateUPIPayment(amount, customerName) {
-    const upiURL = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&am=${amount}&cu=INR&tn=${encodeURIComponent('Order - ' + customerName)}`;
-    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) { showToast('Opening UPI App... 📱'); window.location.href = upiURL; setTimeout(() => showUPIConfirmModal(amount, customerName), 2500); } else { showUPIQRModal(amount, customerName); }
+    showUPIModal(amount, customerName);
 }
 
-function showUPIConfirmModal(amount, customerName) {
-    const modal = document.createElement('div'); modal.id = 'upiConfirmModal'; modal.className = 'modal-overlay'; modal.style.display = 'flex';
-    modal.innerHTML = `<div class="modal-content" style="text-align:center;"><div style="font-size:45px;">📱</div><h2 style="color:#FF5A00; margin-bottom:5px;">Did you pay?</h2><p style="color:#FACC15; font-size:24px; font-weight:800; margin-bottom:15px;">₹${amount}</p><div style="display:flex; gap:10px;"><button class="checkout-btn" style="background:#22C55E; box-shadow:none;" onclick="confirmUPIPayment('${customerName}')">Paid</button><button class="checkout-btn" style="background:#EF4444; box-shadow:none;" onclick="cancelUPIPayment()">Cancel</button></div></div>`;
+function showUPIModal(amount, customerName) {
+    const existing = document.getElementById('upiPaymentModal');
+    if (existing) existing.remove();
+
+    // Generate Dynamic QR Code with exact bill amount
+    const upiString = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&am=${amount}&cu=INR&tn=${encodeURIComponent('Order - ' + customerName)}`;
+    const dynamicQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiString)}`;
+
+    const modal = document.createElement('div');
+    modal.id = 'upiPaymentModal';
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+    modal.innerHTML = `
+        <div class="modal-content" style="text-align:center; max-width:380px;">
+            <button class="modal-close" onclick="cancelUPIPayment()"><i class="fas fa-xmark"></i></button>
+            <h2 style="color:#FF5A00; font-size:20px; margin-bottom:10px;"><i class="fas fa-qrcode"></i> Scan & Pay</h2>
+            
+            <div style="background:#fff; padding:12px; border-radius:16px; display:inline-block; margin-bottom:12px; box-shadow:0 8px 20px rgba(0,0,0,0.4);">
+                <img src="${dynamicQrUrl}" alt="Scan QR Code" style="width:180px; height:180px; object-fit:contain; display:block;" onerror="this.src='${QR_IMAGE_FALLBACK}'">
+            </div>
+
+            <div style="font-size:28px; font-weight:900; color:#FACC15; margin-bottom:12px;">₹${amount}</div>
+
+            <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:10px; border-radius:12px; margin-bottom:15px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                <span style="font-size:12px; color:#A1A1AA; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${UPI_ID}</span>
+                <button onclick="copyUpiId()" style="background:#FF5A00; border:none; color:white; padding:6px 12px; border-radius:8px; font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">
+                    <i class="fas fa-copy"></i> Copy UPI
+                </button>
+            </div>
+
+            <p style="font-size:11px; color:#A1A1AA; margin-bottom:15px;">Scan QR via GPay / PhonePe / Paytm OR Copy UPI ID & Pay</p>
+
+            <div style="display:flex; gap:10px;">
+                <button class="checkout-btn" style="background:#22C55E; box-shadow:none; flex:1;" onclick="confirmUPIPayment('${customerName}')">
+                    <i class="fas fa-check"></i> I've Paid
+                </button>
+                <button class="checkout-btn" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); box-shadow:none; flex:1; color:#fff;" onclick="cancelUPIPayment()">
+                    Cancel
+                </button>
+            </div>
+        </div>`;
     document.body.appendChild(modal);
 }
-function confirmUPIPayment(customerName) { document.getElementById('upiConfirmModal').remove(); pushOrderToFirebase(pendingOrderData.items, pendingOrderData.total, 'upi', 'claimed_paid', customerName); }
-function cancelUPIPayment() { document.getElementById('upiConfirmModal').remove(); showToast('Cancelled ❌'); pendingOrderData = null; }
 
-function showUPIQRModal(amount, customerName) {
-    const modal = document.createElement('div'); modal.id = 'upiQRDesktopModal'; modal.className = 'modal-overlay'; modal.style.display = 'flex';
-    modal.innerHTML = `<div class="modal-content" style="text-align:center;"><button class="modal-close" onclick="closeDesktopQR()"><i class="fas fa-xmark"></i></button><h2 style="margin-bottom:10px;"><i class="fas fa-qrcode"></i> Scan & Pay</h2><div style="background:#fff; padding:10px; border-radius:12px; display:inline-block; margin-bottom:10px;"><img src="${QR_IMAGE}" style="width:160px;height:160px;object-fit:contain;" alt="QR Code"></div><div style="font-size:24px; font-weight:800; color:#FACC15; margin-bottom:15px;">₹${amount}</div><button class="checkout-btn" onclick="confirmDesktopQR('${customerName}')">I've Paid</button></div>`;
-    document.body.appendChild(modal);
+function copyUpiId() {
+    navigator.clipboard.writeText(UPI_ID).then(() => {
+        showToast('UPI ID Copied! Paste in GPay/PhonePe 📋');
+    }).catch(() => {
+        showToast(`UPI ID: ${UPI_ID}`);
+    });
 }
-function closeDesktopQR() { document.getElementById('upiQRDesktopModal').remove(); pendingOrderData = null; }
-function confirmDesktopQR(customerName) { document.getElementById('upiQRDesktopModal').remove(); pushOrderToFirebase(pendingOrderData.items, pendingOrderData.total, 'upi', 'claimed_paid', customerName); }
 
+function confirmUPIPayment(customerName) { 
+    const modal = document.getElementById('upiPaymentModal');
+    if (modal) modal.remove(); 
+    pushOrderToFirebase(pendingOrderData.items, pendingOrderData.total, 'upi', 'claimed_paid', customerName); 
+}
+
+function cancelUPIPayment() { 
+    const modal = document.getElementById('upiPaymentModal');
+    if (modal) modal.remove(); 
+    showToast('Payment Cancelled ❌'); 
+    pendingOrderData = null; 
+}
+
+// =====================================================
+// 🚀 PUSH ORDER TO FIREBASE
+// =====================================================
 function pushOrderToFirebase(items, total, paymentMethod, paymentStatus, customerName) {
     const orderId = Math.floor(1000 + Math.random() * 9000);
     const orderData = { id: orderId, customerName: customerName, items: items.map(i => ({ name: i.name, qty: i.qty, price: i.price })), total: total, payment: paymentMethod, paymentStatus: paymentStatus, status: 'received', timestamp: Date.now() };
@@ -248,8 +327,8 @@ function pushOrderToFirebase(items, total, paymentMethod, paymentStatus, custome
 function showSuccessModal(orderId, paymentMethod, paymentStatus, customerName) {
     document.getElementById('successOrderId').textContent = orderId; const payInfo = document.getElementById('paymentInfo');
     const nameLine = `<p style="margin-bottom:5px;"><i class="fas fa-user" style="color:#FF5A00;"></i> <strong>${customerName}</strong></p>`;
-    if (paymentMethod === 'upi') payInfo.innerHTML = nameLine + `<p><i class="fas fa-clock" style="color:#FACC15;"></i> <strong>Verifying... ⏳</strong></p>`;
-    else payInfo.innerHTML = nameLine + `<p><i class="fas fa-money-bill-wave" style="color:#22C55E;"></i> Pay <strong>Cash</strong> at counter</p>`;
+    if (paymentMethod === 'upi') payInfo.innerHTML = nameLine + `<p><i class="fas fa-clock" style="color:#FACC15;"></i> <strong>Verifying Payment... ⏳</strong></p>`;
+    else payInfo.innerHTML = nameLine + `<p><i class="fas fa-money-bill-wave" style="color:#22C55E;"></i> Pay <strong>Cash</strong> at counter 💵</p>`;
     document.getElementById('orderSuccessModal').style.display = 'flex';
 }
 function closeSuccessModal() { document.getElementById('orderSuccessModal').style.display = 'none'; showStatusTracker(); }
